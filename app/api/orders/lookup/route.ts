@@ -1,67 +1,83 @@
 import { type NextRequest, NextResponse } from "next/server"
-import { createShopifyService } from "@/lib/shopify-service"
-import { dataService } from "@/lib/data-service"
+import { ShopifyService } from "@/lib/shopify-service"
 
 export async function POST(request: NextRequest) {
   try {
-    const { merchant_domain, order_number, customer_email } = await request.json()
+    const { orderNumber, shopDomain } = await request.json()
 
-    if (!merchant_domain || !order_number || !customer_email) {
-      return NextResponse.json({ error: "Missing required parameters" }, { status: 400 })
+    if (!orderNumber || !shopDomain) {
+      return NextResponse.json({ error: "Order number and shop domain are required" }, { status: 400 })
     }
 
-    // --------------------------------------------------------------------
-    // DEMO SHORT-CIRCUIT
-    // --------------------------------------------------------------------
-    if (merchant_domain === "demo-store" || merchant_domain === "demo-store.myshopify.com") {
-      return NextResponse.json({
-        order: {
-          id: "demo-order-id",
-          order_number: "12345",
-          email: "customer@example.com",
-          total_price: "89.97",
-          line_items: [
-            {
-              id: "item_1",
-              product_id: "prod_123",
-              variant_id: "var_123_m_blue",
-              title: "Premium Cotton T-Shirt",
-              variant_title: "Size M / Blue",
-              quantity: 1,
-              price: "29.99",
-            },
-            {
-              id: "item_2",
-              product_id: "prod_456",
-              variant_id: "var_456_32_dark",
-              title: "Denim Jeans",
-              variant_title: "Size 32 / Dark Wash",
-              quantity: 1,
-              price: "59.99",
-            },
-          ],
+    // Handle demo environment - return mock data instead of calling Shopify
+    if (shopDomain === "demo-store.myshopify.com" || shopDomain === "demo-store") {
+      const mockOrder = {
+        id: "12345",
+        order_number: orderNumber,
+        email: "customer@example.com",
+        created_at: "2024-01-15T10:30:00Z",
+        total_price: "89.97",
+        currency: "USD",
+        financial_status: "paid",
+        fulfillment_status: "fulfilled",
+        line_items: [
+          {
+            id: "item_1",
+            product_id: "prod_123",
+            variant_id: "var_123_m_blue",
+            title: "Premium Cotton T-Shirt",
+            variant_title: "Medium / Blue",
+            quantity: 1,
+            price: "29.99",
+            sku: "TSHIRT-M-BLUE",
+            fulfillment_status: "fulfilled",
+          },
+          {
+            id: "item_2",
+            product_id: "prod_456",
+            variant_id: "var_456_32_dark",
+            title: "Denim Jeans",
+            variant_title: "32 / Dark Wash",
+            quantity: 1,
+            price: "59.99",
+            sku: "JEANS-32-DARK",
+            fulfillment_status: "fulfilled",
+          },
+        ],
+        shipping_address: {
+          first_name: "John",
+          last_name: "Doe",
+          address1: "123 Main St",
+          city: "New York",
+          province: "NY",
+          zip: "10001",
+          country: "United States",
         },
-      })
+        billing_address: {
+          first_name: "John",
+          last_name: "Doe",
+          address1: "123 Main St",
+          city: "New York",
+          province: "NY",
+          zip: "10001",
+          country: "United States",
+        },
+      }
+
+      return NextResponse.json({ order: mockOrder })
     }
 
-    // Get merchant data
-    const merchant = await dataService.getMerchantByDomain(merchant_domain)
-    if (!merchant) {
-      return NextResponse.json({ error: "Merchant not found" }, { status: 404 })
-    }
+    // For non-demo environments, use actual Shopify API
+    const shopifyService = new ShopifyService(shopDomain)
+    const order = await shopifyService.findOrderByNumber(orderNumber)
 
-    // Create Shopify service instance
-    const shopifyService = createShopifyService(merchant.shop_domain, merchant.access_token)
-
-    // Look up order
-    const order = await shopifyService.findOrderByNumber(order_number, customer_email)
     if (!order) {
       return NextResponse.json({ error: "Order not found" }, { status: 404 })
     }
 
     return NextResponse.json({ order })
   } catch (error) {
-    console.error("Order lookup error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    console.error("Failed to find order:", error)
+    return NextResponse.json({ error: "Failed to find order" }, { status: 500 })
   }
 }

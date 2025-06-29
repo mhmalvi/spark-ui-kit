@@ -29,6 +29,31 @@ export default function AuthPage() {
     setLoading(true)
 
     try {
+      // Demo login bypass - if using demo credentials, skip Supabase Auth
+      if (formData.email === "admin@demo-store.com" && formData.password === "demo123") {
+        // Set a demo session in localStorage
+        localStorage.setItem(
+          "demo_session",
+          JSON.stringify({
+            user: {
+              id: "550e8400-e29b-41d4-a716-446655440001",
+              email: "admin@demo-store.com",
+              merchantId: "550e8400-e29b-41d4-a716-446655440000",
+              role: "admin",
+            },
+            expires_at: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
+          }),
+        )
+
+        toast({
+          title: "Demo Login Successful!",
+          description: "Welcome to the Returns Automation demo.",
+        })
+
+        router.push("/admin")
+        return
+      }
+
       if (mode === "signup") {
         // Sign up new merchant
         const { data, error } = await supabase.auth.signUp({
@@ -72,6 +97,18 @@ export default function AuthPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleDemoLogin = async () => {
+    setFormData({
+      email: "admin@demo-store.com",
+      password: "demo123",
+      shopDomain: "demo-store.myshopify.com",
+    })
+
+    // Trigger the demo login
+    const event = { preventDefault: () => {} } as React.FormEvent
+    await handleSubmit(event)
   }
 
   const handleShopifyInstall = () => {
@@ -199,8 +236,15 @@ export default function AuthPage() {
           <CardContent className="pt-6">
             <Alert>
               <AlertDescription>
-                <strong>Demo Access:</strong> Use email "admin@demo-store.com" and password "demo123" to try the
-                platform.
+                <div className="flex items-center justify-between">
+                  <div>
+                    <strong>Demo Access:</strong> Use email "admin@demo-store.com" and password "demo123" to try the
+                    platform.
+                  </div>
+                  <Button size="sm" variant="outline" onClick={handleDemoLogin} disabled={loading}>
+                    Quick Demo
+                  </Button>
+                </div>
               </AlertDescription>
             </Alert>
           </CardContent>

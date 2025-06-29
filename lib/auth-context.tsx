@@ -2,149 +2,160 @@
 
 import type React from "react"
 import { createContext, useContext, useEffect, useState } from "react"
-import type { User, Session } from "@supabase/supabase-js"
+import type { User } from "@supabase/supabase-js"
 import { supabase } from "@/lib/supabase"
 import { useRouter } from "next/navigation"
 
-interface AuthUser extends User {
-  merchantId?: string
-  role?: "admin" | "staff"
-  shopDomain?: string
+interface AuthUser {
+  id: string
+  email: string
+  merchantId: string
+  role: "admin" | "staff"
 }
 
 interface AuthContextType {
   user: AuthUser | null
-  session: Session | null
   loading: boolean
   signOut: () => Promise<void>
   refreshUser: () => Promise<void>
 }
 
-const AuthContext = createContext<AuthContextType>({
-  user: null,
-  session: null,
-  loading: true,
-  signOut: async () => {},
-  refreshUser: async () => {},
-})
-
-export const useAuth = () => {
-  const context = useContext(AuthContext)
-  if (!context) {
-    throw new Error("useAuth must be used within an AuthProvider")
-  }
-  return context
-}
+const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
-  const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
   const router = useRouter()
 
-  const fetchUserProfile = async (userId: string): Promise<AuthUser | null> => {
+  const checkDemoSession = () => {
+    try {
+      const demoSession = localStorage.getItem("demo_session")
+      if (demoSession) {
+        const session = JSON.parse(demoSession)
+        if (session.expires_at > Date.now()) {
+          return session.user
+        } else {
+          localStorage.removeItem("demo_session")
+        }
+      }
+    } catch (error) {
+      console.error("Error checking demo session:", error)
+      localStorage.removeItem("demo_session")
+    }
+    return null
+  }
+
+  const fetchUserProfile = async (authUser: User): Promise<AuthUser | null> => {
     try {
       const { data, error } = await supabase
         .from("users")
         .select(`
-          *,
-          merchants!inner(id, shop_domain, name)
+          id,
+          email,
+          role,
+          merchant_id,
+          merchants!inner(id, shop_domain)
         `)
-        .eq("id", userId)
+        .eq("id", authUser.id)
         .single()
 
-      if (error) {
+      if (error || !data) {
         console.error("Error fetching user profile:", error)
         return null
       }
 
       return {
-        ...session?.user,
+        id: data.id,
+        email: data.email,
         merchantId: data.merchant_id,
         role: data.role,
-        shopDomain: data.merchants?.shop_domain,
-      } as AuthUser
+      }
     } catch (error) {
-      console.error("Error in fetchUserProfile:", error)
+      console.error("Error fetching user profile:", error)
       return null
     }
   }
 
   const refreshUser = async () => {
-    if (session?.user) {
-      const userProfile = await fetchUserProfile(session.user.id)
+    try {
+      // Check for demo session first
+      const demoUser = checkDemoSession()
+      if (demoUser) {
+        setUser(demoUser)
+        setLoading(false)
+        return
+      }
+
+      // Check Supabase auth
+      const {
+        data: { user: authUser },
+        error,
+      } = await supabase.auth.getUser()
+
+      if (error || !authUser) {
+        setUser(null)
+        setLoading(false)
+        return
+      }
+
+      const userProfile = await fetchUserProfile(authUser)
       setUser(userProfile)
+    } catch (error) {
+      console.error("Error refreshing user:", error)
+      setUser(null)
+    } finally {
+      setLoading(false)
     }
   }
 
-  useEffect(() => {
-    // Get initial session
-    const getInitialSession = async () => {
-      try {
-        const {
-          data: { session: initialSession },
-        } = await supabase.auth.getSession()
-
-        setSession(initialSession)
-
-        if (initialSession?.user) {
-          const userProfile = await fetchUserProfile(initialSession.user.id)
-          setUser(userProfile)
-        } else {
-          setUser(null)
-        }
-      } catch (error) {
-        console.error("Error getting initial session:", error)
-        setUser(null)
-        setSession(null)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    getInitialSession()
-
-    // Listen for auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, newSession) => {
-      console.log("Auth state changed:", event, newSession?.user?.email)
-
-      setSession(newSession)
-
-      if (newSession?.user) {
-        const userProfile = await fetchUserProfile(newSession.user.id)
-        setUser(userProfile)
-      } else {
-        setUser(null)
-      }
-
-      setLoading(false)
-
-      // Handle navigation based on auth events
-      if (event === "SIGNED_IN") {
-        const redirectTo = new URLSearchParams(window.location.search).get("redirectTo")
-        router.push(redirectTo || "/admin")
-      } else if (event === "SIGNED_OUT") {
-        router.push("/auth")
-      } else if (event === "PASSWORD_RECOVERY") {
-        router.push("/auth/reset-password")
-      }
-    })
-
-    return () => subscription.unsubscribe()
-  }, [router])
-
   const signOut = async () => {
     try {
-      const { error } = await supabase.auth.signOut()
-      if (error) throw error
+      // Clear demo session
+      localStorage.removeItem("demo_session")
+
+      // Sign out from Supabase
+      await supabase.auth.signOut()
+
+      setUser(null)
+      router.push("/auth")
     } catch (error) {
       console.error("Error signing out:", error)
     }
   }
 
-  return (
-    <AuthContext.Provider value={{ user, session, loading, signOut, refreshUser }}>{children}</AuthContext.Provider>
-  )
+  useEffect(() => {
+    // Initial user check
+    refreshUser()
+
+    // Listen for auth changes (but not for demo sessions)
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === "SIGNED_IN" && session?.user) {
+        const userProfile = await fetchUserProfile(session.user)
+        setUser(userProfile)
+      } else if (event === "SIGNED_OUT") {
+        // Only clear user if not in demo mode
+        const demoUser = checkDemoSession()
+        if (!demoUser) {
+          setUser(null)
+        }
+      }
+      setLoading(false)
+    })
+
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [])
+
+  return <AuthContext.Provider value={{ user, loading, signOut, refreshUser }}>{children}</AuthContext.Provider>
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext)
+  if (context === undefined) {
+    throw new Error("useAuth must be used within an AuthProvider")
+  }
+  return context
 }
