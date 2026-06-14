@@ -1,3 +1,6 @@
+<!-- repo-card -->
+![spark-ui-kit](docs/assets/social-card.png)
+
 # Spark UI Kit
 
 A modern React UI starter kit built with Vite, TypeScript, and shadcn/ui components. This project provides a comprehensive collection of pre-configured UI primitives and patterns for rapidly building polished web applications.
